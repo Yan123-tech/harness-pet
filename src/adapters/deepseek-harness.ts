@@ -83,10 +83,15 @@ export interface HarnessSessionStatus {
 export interface HarnessContext {
   sessions: HarnessSessions
   connection: {
-    /** DSH 0.2.1: ObservableSnapshot<'connected' | 'reconnecting' | undefined>. */
+    /**
+     * DSH 0.2.1: ObservableSnapshot<'connected' | 'reconnecting' | undefined>.
+     *
+     * Upstream read `connection.hostDescription`, which 0.2.1 removed. The
+     * reference is deliberately gone rather than kept as a fallback: calling a
+     * removed member is what aborted activation, and this fork does not support
+     * the generation that had it.
+     */
     state?: SnapshotSource<unknown>
-    /** DSH 0.1.0 face; absent on 0.2.1 and probed defensively. */
-    hostDescription?: SnapshotSource<unknown>
   }
   /** DSH 0.2.1 ui-session service; optional so an older runtime still loads. */
   uiSession?: {
@@ -408,13 +413,12 @@ export async function sendHarnessFollowup(
   }
 }
 
-/** Read the connection state across runtime generations. */
+/** Read the connection state. */
 function connectionState(
   connection: HarnessContext['connection'],
 ): 'connected' | 'reconnecting' | undefined {
   const raw = connection.state?.getSnapshot()
   if (raw === 'connected' || raw === 'reconnecting') return raw
-  if (connection.hostDescription?.getSnapshot() !== undefined) return 'connected'
   return undefined
 }
 
@@ -489,8 +493,7 @@ export function observeHarnessSignals(
   const unsubscribeList = context.sessions.list.subscribe(bindCurrent)
   const statusSource = context.uiSession?.sessionStatus
   const unsubscribeStatus = statusSource?.subscribe(emit)
-  const unsubscribeConnection =
-    context.connection.state?.subscribe(emit) ?? context.connection.hostDescription?.subscribe(emit)
+  const unsubscribeConnection = context.connection.state?.subscribe(emit)
   bindCurrent()
 
   return () => {

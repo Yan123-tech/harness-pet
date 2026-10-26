@@ -386,22 +386,33 @@ describe('observeHarnessSignals', () => {
     dispose()
   })
 
-  it('still works against the legacy 0.1.0 hostDescription face', () => {
-    const list = new Source({ current: 'legacy' })
-    const events = new Source<unknown>({ entries: [] })
-    const hostDescription = new Source<unknown>({ version: 'test' })
+  it('reports nothing when the connection source is absent', () => {
+    const list = new Source({ byId: {} })
     const context: HarnessContext = {
-      sessions: { list, binding: () => ({ session: new Source<SignalSnapshot>({}) as never, eventSource: events as never }) },
-      connection: { hostDescription },
+      sessions: { list, binding: () => undefined },
+      connection: {},
     }
     const seen: SignalSnapshot[] = []
     const dispose = observeHarnessSignals(context, (snapshot) => seen.push(snapshot))
 
-    expect(seen.at(-1)?.connection).toBe('connected')
+    expect(seen.at(-1)?.connection).toBeUndefined()
+    expect(() => dispose()).not.toThrow()
+  })
+
+  it('treats a legacy current field as the selected session', () => {
+    // The 0.1.0 `current` field is still honored for the sessions the pet can
+    // read, even though 0.2.1 uses the main-view retention flag.
+    const list = new Source({ current: 'legacy' })
+    const connection = new Source<'connected' | 'reconnecting' | undefined>('connected')
+    const context: HarnessContext = {
+      sessions: { list, binding: () => ({ session: new Source<SignalSnapshot>({}) as never }) },
+      connection: { state: connection },
+    }
+    const seen: SignalSnapshot[] = []
+    const dispose = observeHarnessSignals(context, (snapshot) => seen.push(snapshot))
+
     expect(seen.at(-1)?.sessionId).toBe('legacy')
-    hostDescription.publish(undefined)
-    expect(seen.at(-1)?.connection).toBe('reconnecting')
+    expect(seen.at(-1)?.connection).toBe('connected')
     dispose()
-    expect(hostDescription.listeners.size).toBe(0)
   })
 })
