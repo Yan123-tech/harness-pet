@@ -19,7 +19,7 @@ DeepSeek Harness `0.1.0-rc.6` to `0.2.1-rc.3`.
 
 ### Added
 
-- **`engines.dsh: "0.2.1-rc.3"`**, which the compatibility gate evaluates on its own, so installation needs no `allow-version` exemption.
+- **`engines.dsh: "^0.2.1-rc.3"`**, which the compatibility gate evaluates on its own, so installation needs no `allow-version` exemption. The caret range accepts the whole 0.2.x line — a future `0.2.1-rc.4` or `0.2.2` still installs — while rejecting `0.3.x`, where the contracts may break again.
 - **`tests/contract.test.ts`** — imports the real published DSH types and fails `pnpm run typecheck` when a member the adapter reads disappears. Upstream declared its own structural types, which is why it compiled while broken.
 - Adapter test coverage for every 0.2.1 signal path (native `running`, `promptError`, failed `turn/end`, pending interaction, event-window tool names, streaming text, and malformed windows degrading to idle).
 

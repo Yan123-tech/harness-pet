@@ -116,7 +116,7 @@ The upstream code could not run on 0.2.1-rc.3. Concretely:
 | `SessionFace` = `ObservableSnapshot<ConversationSnapshot>` | `SessionFace` = `ISession & ObservableSnapshot<SessionSnapshot>` |
 | `partial`, `runningCalls`, `pending`, `queue`, `nodes` | event window (`tool/call`, `user/message`, `assistant/message`, `turn/end`) plus `uiSession.sessionStatus` |
 | `dsh.client.inject` listed a removed package | lists packages that exist at `0.2.1-rc.3` |
-| no runtime-gate metadata | `engines.dsh: "0.2.1-rc.3"` decides the compatibility gate alone |
+| no runtime-gate metadata | `engines.dsh: "^0.2.1-rc.3"` decides the compatibility gate alone |
 
 `tests/contract.test.ts` imports the **real** published DSH types and fails `pnpm run typecheck` if any member the adapter reads disappears. Upstream never imported them, which is why it compiled while being broken at runtime.
 

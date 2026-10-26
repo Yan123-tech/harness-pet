@@ -23,7 +23,7 @@
   - `dsh.bundle.patch: "./cordis.patch.yml"` —— 加入 profile 插件层栈
   - `dsh.client: { inject: [...], platform: "web" }` —— 浏览器半边注册
   - `exports["./client"]` —— 客户端产物入口
-  - `engines.dsh` 锁定目标运行时版本（`0.2.1-rc.3`），并作为 dsh 兼容性门禁的唯一依据
+  - `engines.dsh` 声明兼容的运行时范围（`^0.2.1-rc.3`：接受整条 0.2.x，拒绝 0.3.x），并作为 dsh 兼容性门禁的唯一依据
   - peerDependencies 只列真实存在的 `@deepseek-ai/dsh-*@0.2.1-rc.3`（`dsh-client-runtime` 已下线，不得引用）
 - `cordis.patch.yml`：插入一行宿主注册（如 `id: harness-pet / name: 'harness-pet'`），宿主自动把插件编入 `window.__DSH_BOOT__` 并托管 `/plugins/harness-pet/client.js`
 - 插件浏览器半边导出 `{ apply(ctx), inject }`，通过 `ctx` 访问官方服务
