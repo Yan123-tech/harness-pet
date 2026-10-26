@@ -9,7 +9,7 @@
 - 定位：**DeepSeek Harness 的非官方社区宠物**。所有公开材料（README、包描述、界面）必须声明：
   > This is an unofficial community project. Not affiliated with, endorsed by, or maintained by DeepSeek.
   > DeepSeek and related marks belong to their respective owners.
-- 仓库：`github.com/cakeni/harness-pet`（用户名以用户确认为准）
+- 仓库：`github.com/Yan123-tech/harness-pet`（cakeni/harness-pet 的 fork，已移植到 Harness 0.2.1-rc.3）
 - npm 包名：**`harness-pet`**（未占用；建议尽早占名）
 - License：**MIT**
 - 文档双语：`README.md`（英文主文档）+ `README.zh.md`（中文）
@@ -23,19 +23,20 @@
   - `dsh.bundle.patch: "./cordis.patch.yml"` —— 加入 profile 插件层栈
   - `dsh.client: { inject: [...], platform: "web" }` —— 浏览器半边注册
   - `exports["./client"]` —— 客户端产物入口
-  - peerDependencies 锁定 `@deepseek-ai/dsh-*@^0.1.0-rc.6`（当前生态版本 0.1.0-rc.6）
+  - `engines.dsh` 锁定目标运行时版本（`0.2.1-rc.3`），并作为 dsh 兼容性门禁的唯一依据
+  - peerDependencies 只列真实存在的 `@deepseek-ai/dsh-*@0.2.1-rc.3`（`dsh-client-runtime` 已下线，不得引用）
 - `cordis.patch.yml`：插入一行宿主注册（如 `id: harness-pet / name: 'harness-pet'`），宿主自动把插件编入 `window.__DSH_BOOT__` 并托管 `/plugins/harness-pet/client.js`
 - 插件浏览器半边导出 `{ apply(ctx), inject }`，通过 `ctx` 访问官方服务
 - 三种安装方式全部写入 README：
-  - npm：`dsh plugin --profile web add harness-pet`
-  - Git：`dsh plugin --profile web add github:cakeni/harness-pet`（README 注明：带 `prepare` 构建脚本的 git 依赖需要在 profile 的 `pnpm-workspace.yaml` 加 `allowBuilds`）
-  - 开发：`dsh plugin --profile web add link:../harness-pet`
+  - npm：未发布，README 说明如需发布再补
+  - Git：`dsh plugin --profile desktop add github:Yan123-tech/harness-pet`（README 注明：带 `prepare` 构建脚本的 git 依赖需要在 profile 的 `pnpm-workspace.yaml` 加精确 `allowBuilds` 键，且 `pnpm` 必须在 `PATH`）
+  - 开发：`dsh plugin --profile desktop add link:../harness-pet`
 
 **明确不做**：浏览器扩展、修改 Harness 本体、登录、云同步、商店、社交功能、MCP、后端服务、telemetry、analytics、等级/XP 系统。
 
 ## 3. 状态识别（官方契约，不做 DOM 文本嗅探）
 
-订阅 Harness 官方客户端状态（`ctx.sessions` 会话快照 / 连接状态 / 宿主投影）。初版映射依据（字段级，见 RESEARCH.md 第 4 节）：
+订阅 Harness 官方客户端状态。0.2.1-rc.3 的四个来源：`ctx.sessions.list`（当前会话 = `byId[id].retainedBy.mainView > 0`）、`ctx.sessions.binding(id)` 的 `SessionSnapshot`（`running` / `promptError` / `lastAgentError`）、`binding.eventSource` 事件窗口（用户提问、助手回复、未结束的 `tool/call`、失败的 `turn/end`）、`ctx.connection.state`；`waiting` 取自 `uiSession.sessionStatus` 的 pending interaction。映射依据：
 
 | 宠物状态 | Harness 信号 | 置信度 |
 |---|---|---|

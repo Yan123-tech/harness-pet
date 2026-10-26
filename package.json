@@ -1,6 +1,6 @@
 {
   "name": "harness-pet",
-  "version": "0.1.0",
+  "version": "0.2.1-rc.3",
   "description": "Harness Pet is an unofficial community project. Not affiliated with, endorsed by, or maintained by DeepSeek. A tiny whale for DeepSeek Harness.",
   "type": "module",
   "packageManager": "pnpm@11.19.0",
@@ -9,7 +9,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cakeni/harness-pet.git"
+    "url": "git+https://github.com/Yan123-tech/harness-pet.git"
+  },
+  "engines": {
+    "dsh": "0.2.1-rc.3"
   },
   "exports": {
     ".": {
@@ -38,8 +41,9 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-connection"
       ],
       "platform": "web"
     }
@@ -52,10 +56,18 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6"
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-store": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.1-rc.3"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-store": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.1-rc.3",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"

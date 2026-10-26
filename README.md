@@ -2,12 +2,14 @@
 
 > A tiny whale that lives inside DeepSeek Harness.
 
+> **Fork notice.** This is a fork of [`cakeni/harness-pet`](https://github.com/cakeni/harness-pet), ported to DeepSeek Harness **0.2.1-rc.3**. The upstream release targets `0.1.0-rc.6` and no longer loads on current Harness: that runtime package was removed, and the client session contracts changed. See [Porting notes](#porting-notes-021).
+
 **This is an unofficial community project. Not affiliated with, endorsed by, or maintained by DeepSeek. DeepSeek and related marks belong to their respective owners.**
 
 ![Harness Pet animation states](./assets/whale/whale-animation-v6-contact-sheet.png)
 
 ```sh
-dsh plugin --profile web add github:cakeni/harness-pet
+dsh plugin --profile desktop add github:Yan123-tech/harness-pet
 ```
 
 [中文说明](./README.zh.md)
@@ -30,68 +32,93 @@ Harness Pet is an open-source, native DSH web plugin—not a browser extension. 
 
 ## Install
 
-Harness `0.1.0-rc.6` and `pnpm` on `PATH` are required. Installing or removing a plugin changes the host roster, so restart the `dsh web` process after one of these commands. A code-only rebuild of an existing link installation needs only a page refresh.
+Harness `0.2.1-rc.3` and `pnpm` on `PATH` are required. Installing or removing a plugin changes the host roster, so restart the Harness process after one of these commands. A code-only rebuild of an existing link installation needs only a page refresh.
 
 ### npm
 
-The package name is reserved for a future npm release. Until it is published,
-use the Git or local-link installation below.
-
-```sh
-dsh plugin --profile web add harness-pet
-```
+The package is not published to npm. Use the Git or local-link installation below.
 
 ### Git
 
 ```sh
-dsh plugin --profile web add github:cakeni/harness-pet
+dsh plugin --profile desktop add github:Yan123-tech/harness-pet
 ```
 
-Git dependencies run this package's `prepare` build. If pnpm blocks that build, add the exact package key printed by the CLI to the profile's `pnpm-workspace.yaml`, for example:
+The Desktop app owns the `desktop` profile; the CLI still manages its packages, and the install takes effect after a full application restart.
+
+Git dependencies run this package's `prepare` build, and `pnpm` blocks build scripts until the exact package key is allowed. The CLI prints the required key; add it to the profile's `pnpm-workspace.yaml` (normally `$DSH_HOME/profiles/<profile>/pnpm-workspace.yaml`):
 
 ```yaml
 allowBuilds:
-  harness-pet: true
+  harness-pet@https://codeload.github.com/Yan123-tech/harness-pet/tar.gz/<commit>: true
 ```
 
-Then repeat the install command. The profile is normally under `$DSH_HOME/profiles/web`.
+That build also shells out to `pnpm`, so `pnpm` must be on `PATH` — the copy bundled inside the app is not on `PATH`. Then repeat the install command.
 
 ### Local development link
 
 Run this from the repository's parent directory:
 
 ```sh
-dsh plugin --profile web add link:../harness-pet
+dsh plugin --profile desktop add link:../harness-pet
 ```
 
-Build and refresh during development:
+A link install needs no `allowBuilds` key, but the target directory must already contain a built `lib/`:
 
 ```sh
 cd harness-pet
+pnpm install
 pnpm bundle
 ```
+
+Then restart Harness. Code-only rebuilds after that need only a page refresh.
 
 Do not run more than one link installation for the same profile.
 
 ## State detection
 
-The adapter subscribes to the current `ctx.sessions` list and `SessionFace` snapshot. It also observes `ctx.connection.hostDescription`; after a connection has existed, that structured value becoming absent indicates reconnecting. It never matches translated UI text or scrapes the DOM.
+The adapter reads four structured sources and never matches translated UI text or scrapes the DOM:
+
+1. **`ctx.sessions.list`** — the catalog. The current session is the row the host retains for its main view (`byId[id].retainedBy.mainView > 0`), the same rule `ui-session` and `ui-workspace` use; DSH 0.2.1 removed the old `current` field.
+2. **`ctx.sessions.binding(id)`** — a read-only `SessionFace` for that session. Its `SessionSnapshot` carries turn status (`running`, `promptError`, `lastAgentError`).
+3. **`binding.eventSource`** — the session event window, where conversation content lives on 0.2.1. The adapter reduces it to the latest human prompt, the assistant reply, open `tool/call` names, and a failed `turn/end`.
+4. **`ctx.connection.state`** — `'connected' | 'reconnecting' | undefined`.
 
 Priority is: `error > success > waiting > searching/bash/editing > working > thinking > idle`.
 
 | Pet state | Structured detection | Confidence | Failure degradation |
 |---|---|---:|---|
 | `idle` | No higher-priority signal | High | Remains idle |
-| `thinking` | `partial` is present and no tool is running | High | Idle if the field is absent or malformed |
-| `working` | `running === true`, or non-empty unknown `runningCalls` | High | Idle after all running signals clear |
-| `searching` | Running tool name matches the adapter's web-tool table | Medium | Unknown tool names degrade to working |
-| `bash` | Running tool name matches the adapter's shell-tool table | Medium | Unknown tool names degrade to working |
-| `editing` | Running tool name matches the adapter's file-write/editor table | Medium | Unknown tool names degrade to working |
-| `waiting` | Non-empty `pending`, or a queue item with `placement: 'queued'` | High | Falls through to the active lower-priority state |
-| `error` | `promptError`, latest `turn-error`, `lastAgentError`, or reconnecting | High | Falls through when the structured error clears |
+| `thinking` | `SessionSnapshot.running === true` with no open tool call | High | Idle when the run ends |
+| `working` | An open `tool/call` whose name matches no specialized table | High | Idle after all calls return |
+| `searching` | An open `tool/call` name matches the adapter's web-tool table | Medium | Unknown tool names degrade to working |
+| `bash` | An open `tool/call` name matches the adapter's shell-tool table | Medium | Unknown tool names degrade to working |
+| `editing` | An open `tool/call` name matches the adapter's file-write/editor table | Medium | Unknown tool names degrade to working |
+| `waiting` | `uiSession.sessionStatus` reports a pending approval or question | High | Falls through to the active lower-priority state |
+| `error` | `promptError`, `lastAgentError`, a failed `turn/end`, or reconnecting | High | Falls through when the structured error clears |
 | `success` | Derived from a clean `running: true → false` edge for about 3 seconds | Derived | Returns to the latest real state, usually idle |
 
+`thinking` vs `working` are separated by open tool calls rather than by the upstream `partial` field, which does not exist on 0.2.1: a running turn with an open call shows the tool state, and a running turn without one shows generation.
+
 The tool-name table is intentionally isolated in [`src/adapters/deepseek-harness.ts`](./src/adapters/deepseek-harness.ts). Pre-1.0 Harness releases may rename tools; an unrecognized active tool is reported only as `working`, never fabricated as a specialized state.
+
+`uiSession` is resolved through `ctx.get('uiSession')` and is deliberately *not* a hard `inject` dependency: the pet only uses it to sharpen `waiting` detection, and a hard injection would park the whole plugin whenever the provider is absent.
+
+### Porting notes (0.2.1)
+
+The upstream code could not run on 0.2.1-rc.3. Concretely:
+
+| Upstream (0.1.0-rc.6) | This fork (0.2.1-rc.3) |
+|---|---|
+| `@deepseek-ai/dsh-client-runtime` peer | package no longer exists; removed |
+| `ctx.connection.hostDescription` | removed → `ctx.connection.state` |
+| `sessions.list…current` | removed → `retainedBy.mainView` |
+| `SessionFace` = `ObservableSnapshot<ConversationSnapshot>` | `SessionFace` = `ISession & ObservableSnapshot<SessionSnapshot>` |
+| `partial`, `runningCalls`, `pending`, `queue`, `nodes` | event window (`tool/call`, `user/message`, `assistant/message`, `turn/end`) plus `uiSession.sessionStatus` |
+| `dsh.client.inject` listed a removed package | lists packages that exist at `0.2.1-rc.3` |
+| no runtime-gate metadata | `engines.dsh: "0.2.1-rc.3"` decides the compatibility gate alone |
+
+`tests/contract.test.ts` imports the **real** published DSH types and fails `pnpm run typecheck` if any member the adapter reads disappears. Upstream never imported them, which is why it compiled while being broken at runtime.
 
 ## Controls
 
@@ -117,8 +144,9 @@ The plugin makes no independent `fetch`, analytics, telemetry, cloud-sync, or th
 
 | Harness client API | Status |
 |---|---|
-| `0.1.0-rc.6` | Targeted and type-checked against the published client contracts |
-| Later `0.1.x` prereleases | Unverified; the client API is pre-1.0 and may change |
+| `0.2.1-rc.3` | Targeted; type-checked against the published client contracts and guarded by `tests/contract.test.ts` |
+| Other `0.2.1-rc.x` | Expected to work; untested |
+| `0.1.0-rc.6` | Unsupported; this fork removed the APIs that generation used |
 | Browser extension mode | Unsupported; this project is a native DSH plugin |
 | Desktop window | Chromium 116+ Document Picture-in-Picture; unsupported browsers keep the control disabled |
 

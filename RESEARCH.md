@@ -1,5 +1,14 @@
 # Harness Pet — Reconnaissance Findings (RESEARCH)
 
+> **Superseded for harness APIs.** This document records reconnaissance against
+> `0.1.0-rc.6`. **The current target is `0.2.1-rc.3`**, and the harness-facing
+> sections below (§3 official client state sources, §4 state mapping, §5 CLI
+> mechanics) no longer describe it: `@deepseek-ai/dsh-client-runtime` was removed,
+> `ctx.connection.hostDescription` and `sessions.list.current` are gone, and
+> conversation content moved from `ConversationSnapshot` to the session event
+> window. See `README.md` § *Porting notes (0.2.1)* for the current contracts.
+> §1–§2 (page anatomy and how a plugin registers) still hold.
+
 Pre-implementation research on how DeepSeek Harness works, so the implementer does
 not need to re-derive it. **All findings below were verified against the actually
 running Harness instance (`http://127.0.0.1:3080`) and the installed npm packages.

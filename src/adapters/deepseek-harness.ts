@@ -5,7 +5,14 @@ export interface SnapshotSource<T> {
   subscribe(listener: () => void): () => void
 }
 
-/** The only Harness-shaped value consumed by the state mapper. */
+/**
+ * Normalized Harness signal consumed by the pure mapper and the pet UI.
+ *
+ * Fields below the divider carry the DSH 0.2.1 shape; the ones above it are the
+ * 0.1.0 shape kept because the same mapper still degrades safely on either
+ * runtime. Every field is `unknown` so a malformed or absent source produces
+ * `idle` rather than an exception.
+ */
 export interface SignalSnapshot {
   sessionId?: unknown
   chat?: unknown
@@ -19,17 +26,44 @@ export interface SignalSnapshot {
   nodes?: unknown
   connection?: unknown
   derivedSuccess?: unknown
+  /** DSH 0.2.1 SessionSnapshot.running. */
+  sessionRunning?: unknown
+  /** DSH 0.2.1 SessionSnapshot.promptError. */
+  sessionPromptError?: unknown
+  /** DSH 0.2.1 SessionStatus.pendingInteraction (approval or question). */
+  pendingInteraction?: unknown
+  /** Names of tool calls opened on the 0.2.1 event window and not yet answered. */
+  toolNames?: unknown
+  /** Latest local user prompt text read from the 0.2.1 event window. */
+  userText?: unknown
+  /** Latest assistant text (finalized, or the streamed prefix) from the event window. */
+  assistantText?: unknown
+  /** DSH 0.2.1 event window ended its last turn with a failure. */
+  turnFailed?: unknown
   [key: string]: unknown
 }
 
+/** Structural subset of the DSH sessions list state. */
+export interface HarnessListState {
+  ids?: readonly string[]
+  current?: string
+  byId?: Record<string, { retainedBy?: Readonly<Record<string, number>> } | undefined>
+}
+
 interface HarnessSessions {
-  list: SnapshotSource<{ current?: string }>
-  binding(id: string): { session: HarnessSessionFace } | undefined
+  list: SnapshotSource<HarnessListState>
+  binding(id: string): HarnessSessionBinding | undefined
 }
 
 export interface FollowupSendResult {
   ok: boolean
   message?: string
+}
+
+/** Structural subset of a DSH SessionBinding. */
+export interface HarnessSessionBinding {
+  session: HarnessSessionFace
+  eventSource?: SnapshotSource<unknown>
 }
 
 export interface HarnessSessionFace extends SnapshotSource<SignalSnapshot> {
@@ -39,16 +73,38 @@ export interface HarnessSessionFace extends SnapshotSource<SignalSnapshot> {
   ): Promise<unknown>
 }
 
+/** DSH 0.2.1 SessionStatus row (running + pending interaction per session). */
+export interface HarnessSessionStatus {
+  running?: boolean | undefined
+  pendingInteraction?: unknown
+  completionUnread?: boolean
+}
+
 export interface HarnessContext {
   sessions: HarnessSessions
   connection: {
-    hostDescription: SnapshotSource<unknown>
+    /** DSH 0.2.1: ObservableSnapshot<'connected' | 'reconnecting' | undefined>. */
+    state?: SnapshotSource<unknown>
+    /** DSH 0.1.0 face; absent on 0.2.1 and probed defensively. */
+    hostDescription?: SnapshotSource<unknown>
+  }
+  /** DSH 0.2.1 ui-session service; optional so an older runtime still loads. */
+  uiSession?: {
+    sessionStatus?: SnapshotSource<ReadonlyMap<string, HarnessSessionStatus>>
   }
 }
 
 const TOOL_NAMES: Readonly<Record<'searching' | 'bash' | 'editing', ReadonlySet<string>>> = {
-  searching: new Set(['web_search', 'tool_web', 'web']),
-  bash: new Set(['bash', 'tool_bash', 'pwsh', 'tool_pwsh', 'powershell', 'shell']),
+  searching: new Set([
+    'web_search',
+    'tool_web',
+    'web',
+    'web-fetch',
+    'web-fetch-and-search',
+    'tool_web_search',
+    'fetch',
+  ]),
+  bash: new Set(['bash', 'tool_bash', 'pwsh', 'tool_pwsh', 'powershell', 'shell', 'run_command']),
   editing: new Set([
     'str-replace-editor',
     'str_replace_editor',
@@ -57,6 +113,9 @@ const TOOL_NAMES: Readonly<Record<'searching' | 'bash' | 'editing', ReadonlySet<
     'write_file',
     'write-file',
     'file_write',
+    'edit',
+    'multi_edit',
+    'create_file',
   ]),
 }
 
@@ -83,6 +142,7 @@ function snapshotPartial(snapshot: SignalSnapshot): Record<string, unknown> | un
   return isRecord(legacy) ? legacy : undefined
 }
 
+/** Join the visible `text` blocks of a message or partial content array. */
 function contentText(value: unknown): string | undefined {
   const text = array(value)
     .flatMap((block) => {
@@ -101,44 +161,71 @@ function runningToolNames(snapshot: SignalSnapshot): Set<string> {
     if (!isRecord(call) || typeof call.name !== 'string') continue
     names.add(call.name.trim().toLowerCase())
   }
+  for (const name of array(snapshot.toolNames)) {
+    if (typeof name === 'string' && name.trim()) names.add(name.trim().toLowerCase())
+  }
   return names
+}
+
+function isRunning(snapshot: SignalSnapshot): boolean {
+  // An explicit 0.2.1 bit is authoritative; the 0.1.0 bits are the fallback so a
+  // snapshot carrying both cannot disagree.
+  if (typeof snapshot.sessionRunning === 'boolean') return snapshot.sessionRunning
+  return snapshot.running === true
 }
 
 function hasError(snapshot: SignalSnapshot): boolean {
   const lastNode = snapshotArray(snapshot, 'nodes').at(-1)
   return (
     isRecord(snapshot.promptError) ||
+    isRecord(snapshot.sessionPromptError) ||
+    snapshot.turnFailed === true ||
     (typeof snapshot.lastAgentError === 'string' && snapshot.lastAgentError.trim().length > 0) ||
     snapshot.connection === 'reconnecting' ||
     (isRecord(lastNode) && lastNode.kind === 'turn-error')
   )
 }
 
-/** Pure Harness signal mapper. Unknown and malformed fields degrade safely. */
+/**
+ * Pure Harness signal mapper. Unknown and malformed fields degrade safely.
+ *
+ * Semantics of the two "busy" states are deliberate and differ slightly from
+ * upstream, which keyed `thinking` off a `partial` field that no longer exists
+ * on 0.2.1 (so it could never fire there):
+ *
+ * - a run with an open tool call is `working` (or a specialized tool state);
+ * - a run with no open tool call is `thinking` — the model is generating;
+ * - `idle` when neither holds.
+ */
 export function detectPetStatus(snapshot: SignalSnapshot): PetStatus {
   if (hasError(snapshot)) return 'error'
   if (snapshot.derivedSuccess === true) return 'success'
 
   if (
     array(snapshot.pending).length > 0 ||
+    (snapshot.pendingInteraction !== undefined && snapshot.pendingInteraction !== null) ||
     array(snapshot.queue).some((item) => isRecord(item) && item.placement === 'queued')
   ) {
     return 'waiting'
   }
 
   const names = runningToolNames(snapshot)
+  const legacyCalls = snapshotArray(snapshot, 'runningCalls').length > 0
   for (const status of ['searching', 'bash', 'editing'] as const) {
     if ([...names].some((name) => TOOL_NAMES[status].has(name))) return status
   }
 
-  if (snapshot.running === true || snapshotArray(snapshot, 'runningCalls').length > 0) return 'working'
+  // Tool execution outranks pure generation.
+  if (names.size > 0 || legacyCalls) return 'working'
+  if (isRunning(snapshot)) return 'thinking'
+  // 0.1.0 compatibility: a streamed partial with no running bit still means "busy".
   if (snapshotPartial(snapshot) !== undefined) return 'thinking'
   return 'idle'
 }
 
 /** Exact native running bit used by the generic success state machine. */
 export function isHarnessRunning(snapshot: SignalSnapshot): boolean {
-  return snapshot.running === true
+  return isRunning(snapshot)
 }
 
 export function harnessSignalIdentity(snapshot: SignalSnapshot): string | undefined {
@@ -158,7 +245,9 @@ export function harnessConversationTitle(snapshot: SignalSnapshot): string | und
     if (typeof item.text === 'string' && item.text.trim()) return item.text.trim()
     if (typeof item.preview === 'string' && item.preview.trim()) return item.preview.trim()
   }
-  return undefined
+
+  const userText = typeof snapshot.userText === 'string' ? snapshot.userText.trim() : ''
+  return userText || undefined
 }
 
 /** Live partial answer, or the finalized answer that belongs to the latest user message. */
@@ -173,6 +262,117 @@ export function harnessAssistantText(snapshot: SignalSnapshot): string | undefin
     if (!isRecord(node)) continue
     if (node.kind === 'user' || node.kind === 'steering') return undefined
     if (node.kind === 'assistant') return contentText(node.blocks)
+  }
+
+  const assistantText = typeof snapshot.assistantText === 'string' ? snapshot.assistantText.trim() : ''
+  return assistantText || undefined
+}
+
+/**
+ * Reduce a DSH 0.2.1 `SessionEventWindow` to the facts the pet needs.
+ *
+ * The window is the conversation itself on 0.2.1 (`SessionSnapshot` carries only
+ * turn status). Entries are `{ type: 'event', event }` for durable events and
+ * `{ type: 'transient', event }` for live stream chunks. Reconstruction stays
+ * deliberately shallow: the pet shows the newest prompt, the newest reply, and
+ * which tools are open — it never re-derives the full transcript.
+ */
+export function reduceSessionEvents(window: unknown): {
+  userText?: string
+  assistantText?: string
+  toolNames: string[]
+  turnFailed: boolean
+} {
+  if (!isRecord(window)) return { toolNames: [], turnFailed: false }
+  const entries = array(window.entries)
+
+  let userText: string | undefined
+  let assistantText: string | undefined
+  let turnFailed = false
+  const openCalls = new Map<string, string>()
+  let streamed = ''
+
+  for (const entry of entries) {
+    if (!isRecord(entry) || !isRecord(entry.event)) continue
+    const event = entry.event
+    const type = typeof event.type === 'string' ? event.type : ''
+    const data = isRecord(event.data) ? event.data : undefined
+
+    if (entry.type === 'transient') {
+      // assistant/live-chunk: accumulate the streamed text prefix of this turn.
+      const chunk = data !== undefined && isRecord(data.chunk) ? data.chunk : undefined
+      if (type === 'assistant/live-chunk' && chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+        streamed += chunk.text
+      }
+      continue
+    }
+
+    if (type === 'user/message') {
+      // A new human prompt resets the reply state for the card.
+      const source = data !== undefined && isRecord(data.source) ? data.source : undefined
+      const text = data !== undefined ? contentText(data.content) : undefined
+      if (text !== undefined && (source === undefined || source.kind === 'user')) {
+        userText = text
+        assistantText = undefined
+        streamed = ''
+      }
+      continue
+    }
+
+    if (type === 'assistant/message') {
+      const message = data !== undefined && isRecord(data.message) ? data.message : undefined
+      const text = message !== undefined ? contentText(message.content) : undefined
+      if (text !== undefined) assistantText = text
+      streamed = ''
+      continue
+    }
+
+    if (type === 'tool/call') {
+      if (typeof data?.callId === 'string' && typeof data.name === 'string') {
+        openCalls.set(data.callId, data.name)
+      }
+      continue
+    }
+
+    if (type === 'tool/result') {
+      const callId = data !== undefined && typeof data.callId === 'string' ? data.callId : undefined
+      if (callId !== undefined) openCalls.delete(callId)
+      continue
+    }
+
+    if (type === 'turn/end') {
+      const reason = data !== undefined && isRecord(data.reason) ? data.reason : undefined
+      turnFailed = reason?.kind === 'failed' || reason?.kind === 'blocked'
+      openCalls.clear()
+      continue
+    }
+
+    if (type === 'turn/start') {
+      turnFailed = false
+    }
+  }
+
+  // A streamed prefix is shown only while no finalized answer superseded it.
+  const live = streamed.trim() || undefined
+  const reply = assistantText ?? live
+  return {
+    ...(userText === undefined ? {} : { userText }),
+    ...(reply === undefined ? {} : { assistantText: reply }),
+    toolNames: [...openCalls.values()],
+    turnFailed,
+  }
+}
+
+/** The session the UI currently retains for its main view (DSH 0.2.1 selection rule). */
+export function currentSessionId(state: HarnessListState | undefined): string | undefined {
+  if (state === undefined) return undefined
+  // 0.1.0 carried an explicit selection field.
+  if (typeof state.current === 'string') return state.current
+  // 0.2.1: the main view is the row retained by the workspace, exactly as
+  // ui-session's publishMain and ui-workspace's mainSessionId resolve it.
+  if (state.byId === undefined) return undefined
+  for (const [id, row] of Object.entries(state.byId)) {
+    if (row !== undefined && (row.retainedBy?.mainView ?? 0) > 0) return id
   }
   return undefined
 }
@@ -191,7 +391,7 @@ export async function sendHarnessFollowup(
 ): Promise<FollowupSendResult> {
   const text = value.trim()
   if (!text) return { ok: false, message: '请输入继续跟进的内容' }
-  const id = context.sessions.list.getSnapshot().current
+  const id = currentSessionId(context.sessions.list.getSnapshot())
   const session = id === undefined ? undefined : context.sessions.binding(id)?.session
   if (session?.prompt === undefined) return { ok: false, message: '当前没有可发送的 Harness 会话' }
 
@@ -208,63 +408,99 @@ export async function sendHarnessFollowup(
   }
 }
 
+/** Read the connection state across runtime generations. */
+function connectionState(
+  connection: HarnessContext['connection'],
+): 'connected' | 'reconnecting' | undefined {
+  const raw = connection.state?.getSnapshot()
+  if (raw === 'connected' || raw === 'reconnecting') return raw
+  if (connection.hostDescription?.getSnapshot() !== undefined) return 'connected'
+  return undefined
+}
+
 /**
- * Subscribe to the current SessionFace and the public connection description.
- * A description disappearing after the first successful connection is the
- * public structured reconnect signal; connection.start() remains host-owned.
+ * Subscribe to the current SessionFace, its event window, the session status
+ * feed, and the public connection source.
+ *
+ * A connection source that goes absent after the first successful connection is
+ * the public structured reconnect signal. `binding(id)` yields a read-only face
+ * for the session the workspace already retains, so the pet never allocates a
+ * scope of its own.
  */
 export function observeHarnessSignals(
   context: HarnessContext,
   listener: (snapshot: SignalSnapshot) => void,
 ): () => void {
   let disposed = false
-  let currentSessionId: string | undefined
-  let currentSource: SnapshotSource<SignalSnapshot> | undefined
-  let unsubscribeCurrent: (() => void) | undefined
-  let everConnected = context.connection.hostDescription.getSnapshot() !== undefined
+  let boundSessionId: string | undefined
+  let currentBinding: HarnessSessionBinding | undefined
+  let unsubscribeSession: (() => void) | undefined
+  let unsubscribeEvents: (() => void) | undefined
+  let everConnected = connectionState(context.connection) === 'connected'
 
-  const connectionState = (): 'connected' | 'reconnecting' | undefined => {
-    if (context.connection.hostDescription.getSnapshot() !== undefined) {
-      everConnected = true
-      return 'connected'
-    }
-    return everConnected ? 'reconnecting' : undefined
-  }
-
-  const emit = (): void => {
+  function emit(): void {
     if (disposed) return
-    const current = currentSource?.getSnapshot()
+    const sessionSnapshot = currentBinding?.session.getSnapshot()
+    const window = currentBinding?.eventSource?.getSnapshot()
+    const status = boundSessionId === undefined
+      ? undefined
+      : context.uiSession?.sessionStatus?.getSnapshot().get(boundSessionId)
+    const reduced = reduceSessionEvents(window)
+    const connection = connectionState(context.connection)
+    if (connection === 'connected') everConnected = true
+
+    // The native SessionSnapshot bit is authoritative when present; the
+    // uiSession status feed is the fallback and the only source of a pending
+    // interaction (an approval or question blocking the turn).
+    const nativeRunning = isRecord(sessionSnapshot) ? sessionSnapshot.running : undefined
+    const sessionRunning = typeof nativeRunning === 'boolean'
+      ? nativeRunning
+      : status?.running === true
+
     listener({
-      ...(isRecord(current) ? current : {}),
-      sessionId: currentSessionId,
-      connection: connectionState(),
+      ...(isRecord(sessionSnapshot) ? sessionSnapshot : {}),
+      sessionId: boundSessionId,
+      connection: connection === 'connected' ? 'connected' : everConnected ? 'reconnecting' : undefined,
+      sessionRunning,
+      ...(status?.pendingInteraction === undefined ? {} : { pendingInteraction: status.pendingInteraction }),
+      ...(reduced.userText === undefined ? {} : { userText: reduced.userText }),
+      ...(reduced.assistantText === undefined ? {} : { assistantText: reduced.assistantText }),
+      toolNames: reduced.toolNames,
+      turnFailed: reduced.turnFailed,
     })
   }
 
   const bindCurrent = (): void => {
-    const id = context.sessions.list.getSnapshot().current
-    const next = id === undefined ? undefined : context.sessions.binding(id)?.session
-    currentSessionId = id
-    if (Object.is(next, currentSource)) {
+    const id = currentSessionId(context.sessions.list.getSnapshot())
+    const next = id === undefined ? undefined : context.sessions.binding(id)
+    boundSessionId = id
+    if (Object.is(next, currentBinding)) {
       emit()
       return
     }
-    unsubscribeCurrent?.()
-    currentSource = next
-    unsubscribeCurrent = next?.subscribe(emit)
+    unsubscribeSession?.()
+    unsubscribeEvents?.()
+    currentBinding = next
+    unsubscribeSession = next?.session.subscribe(emit)
+    unsubscribeEvents = next?.eventSource?.subscribe(emit)
     emit()
   }
 
   const unsubscribeList = context.sessions.list.subscribe(bindCurrent)
-  const unsubscribeConnection = context.connection.hostDescription.subscribe(emit)
+  const statusSource = context.uiSession?.sessionStatus
+  const unsubscribeStatus = statusSource?.subscribe(emit)
+  const unsubscribeConnection =
+    context.connection.state?.subscribe(emit) ?? context.connection.hostDescription?.subscribe(emit)
   bindCurrent()
 
   return () => {
     if (disposed) return
     disposed = true
-    unsubscribeCurrent?.()
+    unsubscribeSession?.()
+    unsubscribeEvents?.()
     unsubscribeList()
-    unsubscribeConnection()
-    currentSource = undefined
+    unsubscribeStatus?.()
+    unsubscribeConnection?.()
+    currentBinding = undefined
   }
 }

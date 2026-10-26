@@ -9,7 +9,7 @@
 ![Harness Pet 动画状态预览](./assets/whale/whale-animation-v6-contact-sheet.png)
 
 ```sh
-dsh plugin --profile web add github:cakeni/harness-pet
+dsh plugin --profile desktop add github:Yan123-tech/harness-pet
 ```
 
 [English](./README.md)
@@ -31,7 +31,7 @@ Harness Pet 是开源的 DSH 原生网页插件，不是浏览器扩展。它在
 
 ## 安装
 
-需要 Harness `0.1.0-rc.6`，且 `pnpm` 位于 `PATH`。添加或删除插件后，需要自行重启 `dsh web` 进程，让宿主重新扫描插件清单；已安装 link 的代码重建只需刷新页面。
+需要 Harness `0.2.1-rc.3`，且 `pnpm` 位于 `PATH`。添加或删除插件后，需要重启 Harness 进程，让宿主重新扫描插件清单；已安装 link 的代码重建只需刷新页面。
 
 ### npm
 
@@ -44,7 +44,7 @@ dsh plugin --profile web add harness-pet
 ### Git
 
 ```sh
-dsh plugin --profile web add github:cakeni/harness-pet
+dsh plugin --profile desktop add github:Yan123-tech/harness-pet
 ```
 
 Git 依赖会执行本包的 `prepare` 构建。如果 pnpm 阻止构建，请把 CLI 输出的准确包名加入 profile 的 `pnpm-workspace.yaml`，例如：
@@ -61,7 +61,7 @@ allowBuilds:
 在仓库的父目录执行：
 
 ```sh
-dsh plugin --profile web add link:../harness-pet
+dsh plugin --profile desktop add link:../harness-pet
 ```
 
 开发时重建并刷新页面：
@@ -75,7 +75,7 @@ pnpm bundle
 
 ## 状态识别
 
-适配器订阅当前 `ctx.sessions` 列表和 `SessionFace` 快照，并观察 `ctx.connection.hostDescription`。连接曾经成功后，该结构化值变为缺失即表示正在重连。插件不匹配中英文界面文案，也不抓取 DOM。
+适配器读取四个结构化来源，且不匹配界面文案、不抓取 DOM：`ctx.sessions.list`（当前会话 = `byId[id].retainedBy.mainView > 0` 的行，即宿主主视图保留的会话）、`ctx.sessions.binding(id)` 的 `SessionSnapshot`（`running` / `promptError` / `lastAgentError`）、`binding.eventSource` 事件窗口（最新的用户提问、助手回复、未结束的 `tool/call`、失败的 `turn/end`），以及 `ctx.connection.state`。
 
 优先级：`error > success > waiting > searching/bash/editing > working > thinking > idle`。
 
@@ -119,7 +119,7 @@ pnpm bundle
 
 | Harness 客户端 API | 状态 |
 |---|---|
-| `0.1.0-rc.6` | 目标版本；按已发布客户端类型完成类型检查 |
+| `0.2.1-rc.3` | 目标版本；按已发布客户端类型完成类型检查，并由 `tests/contract.test.ts` 守护 |
 | 后续 `0.1.x` 预发布版 | 未验证；1.0 前 API 可能变化 |
 | 浏览器扩展模式 | 不支持；本项目是 DSH 原生插件 |
 | 桌面小窗 | Chromium 116+ 的 Document Picture-in-Picture；不支持的浏览器会禁用按钮 |
